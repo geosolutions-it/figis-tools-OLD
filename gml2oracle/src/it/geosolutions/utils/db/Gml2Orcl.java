@@ -14,6 +14,8 @@ import java.util.Map;
 
 import javax.xml.parsers.ParserConfigurationException;
 
+import com.vividsolutions.jts.geom.Geometry;
+
 import org.apache.commons.cli2.Option;
 import org.apache.commons.cli2.validation.InvalidArgumentException;
 import org.apache.commons.cli2.validation.Validator;
@@ -27,21 +29,16 @@ import org.geotools.data.Transaction;
 import org.geotools.data.simple.SimpleFeatureCollection;
 import org.geotools.feature.FeatureIterator;
 import org.geotools.feature.IllegalAttributeException;
-import org.geotools.feature.simple.SimpleFeatureTypeBuilder;
 import org.geotools.geometry.jts.JTS;
 import org.geotools.jdbc.JDBCDataStoreFactory;
 import org.geotools.referencing.CRS;
 import org.opengis.feature.simple.SimpleFeature;
-import org.opengis.feature.simple.SimpleFeatureType;
-import org.opengis.feature.type.AttributeDescriptor;
 import org.opengis.geometry.MismatchedDimensionException;
 import org.opengis.referencing.FactoryException;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
 import org.opengis.referencing.operation.MathTransform;
 import org.opengis.referencing.operation.TransformException;
 import org.xml.sax.SAXException;
-
-import com.vividsolutions.jts.geom.Geometry;
 
 
 /**
@@ -287,47 +284,22 @@ public class Gml2Orcl extends BaseArgumentsManager
         GML gml = new GML(Version.WFS1_0);
         SimpleFeatureCollection featureCollection = gml.decodeFeatureCollection(in);
 
-        String typeName = featureCollection.getSchema().getTypeName();
+        String ftName = featureCollection.getSchema().getTypeName();
 
         /** Importing GML Data to DB **/
-        SimpleFeatureType ftSchema = featureCollection.getSchema();
-        
-        SimpleFeatureType targetSchema;
-		// build the schema type
-		try {
-			SimpleFeatureTypeBuilder tb = new SimpleFeatureTypeBuilder();
-			tb.setName(typeName);
-			
-			for(AttributeDescriptor att : ftSchema.getAttributeDescriptors())
-	        {
-	        	if(
-        				!att.getLocalName().equals("name") &&
-        				!att.getLocalName().equals("description") &&
-        				!att.getLocalName().equals("boundedBy")
-        		)
-	        	{
-	        		tb.add(att);
-	        	}
-	        }
-			
-			targetSchema = tb.buildFeatureType();
-		} catch (Exception e) {
-			throw new RuntimeException(
-					"Failed to import data into the target store", e);
-		}//try:catch
-		
+
         // create the schema for the new shape file
         try
         {
             // FTWrapper pgft = new FTWrapper(shpDataStore.getSchema(ftName));
             // pgft.setReplaceTypeName(tablename);
-            orclDataStore.createSchema(targetSchema);
+            orclDataStore.createSchema(featureCollection.getSchema());
         }
         catch (Exception e)
         {
             e.printStackTrace();
             // Most probably the schema already exists in the DB
-            log("Error while creating schema '" + typeName + "': " + e.getMessage());
+            log("Error while creating schema '" + ftName + "': " + e.getMessage());
             log("Will try to load featuretypes bypassing the error.");
 
             // orclDataStore.updateSchema(typeNames[t],
@@ -335,7 +307,7 @@ public class Gml2Orcl extends BaseArgumentsManager
         }
 
         // get a feature writer
-        FeatureWriter<?, SimpleFeature> fw = orclDataStore.getFeatureWriter(typeName.toUpperCase(), Transaction.AUTO_COMMIT);
+        FeatureWriter<?, SimpleFeature> fw = orclDataStore.getFeatureWriter(ftName.toUpperCase(), Transaction.AUTO_COMMIT);
 
         // /////////////////////////////////////////////////////////////////////
         //
@@ -364,39 +336,35 @@ public class Gml2Orcl extends BaseArgumentsManager
 
             if ((cnt % 50) == 0)
             {
-                log("inserting ft #" + cnt + "/" + size + " in " + typeName);
+                log("inserting ft #" + cnt + "/" + size + " in " + ftName);
             }
 
             if (srcFeature != null)
             {
-                for (AttributeDescriptor attribute : srcFeature.getFeatureType().getAttributeDescriptors())
+                int attr = srcFeature.getAttributeCount();
+                for (int a = 0; a < attr; a++)
                 {
-                	if(attribute != null)
-                		if (
-                				!attribute.getLocalName().equals("name") &&
-                				!attribute.getLocalName().equals("description") &&
-                				!attribute.getLocalName().equals("boundedBy")
-                		)
-                			if (srcFeature.getAttribute(attribute.getName()) instanceof Geometry)
-                			{
+                    Object attribute = srcFeature.getAttribute(a);
+                    if (attribute instanceof Geometry)
+                    {
 
-                				/** get the original geometry and put it as is into the DB ... **/
-                				Geometry defGeom = (Geometry) srcFeature.getAttribute(attribute.getName());
+                        /** get the original geometry and put it as is into the DB ... **/
+                        Geometry defGeom = (Geometry) attribute;
 
-                				/** if we need to reproject the geometry before inserting into the DB ... **/
-                				if (!srcCRSToWGS84.isIdentity())
-                				{
-                					defGeom = JTS.transform((Geometry) attribute, srcCRSToWGS84);
-                				}
+                        /** if we need to reproject the geometry before inserting into the DB ... **/
+                        if (!srcCRSToWGS84.isIdentity())
+                        {
+                            defGeom = JTS.transform((Geometry) attribute, srcCRSToWGS84);
+                        }
 
-                				defGeom.setSRID(999999);
+                        defGeom.setSRID(999999);
 
-                				feature.setAttribute(attribute.getName(), defGeom.buffer(0));
-                			}
-                			else
-                			{
-                				feature.setAttribute(attribute.getName(), srcFeature.getAttribute(attribute.getName()));
-                			}
+                        feature.setAttribute(a, defGeom);
+                    }
+                    else
+                    {
+                        feature.setAttribute(a, attribute);
+                    }
                 }
                 fw.write();
                 cnt++;
@@ -416,7 +384,7 @@ public class Gml2Orcl extends BaseArgumentsManager
         /** Importing SHP Data to DB - END **/
         long endwork = System.currentTimeMillis();
 
-        log(" *** Inserted " + cnt + " features in " + typeName + " in " + (endwork - startwork) + "ms");
+        log(" *** Inserted " + cnt + " features in " + ftName + " in " + (endwork - startwork) + "ms");
     }
 
     private void log(String msg)

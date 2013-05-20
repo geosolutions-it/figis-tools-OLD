@@ -229,8 +229,6 @@ public class Shp2Orcl extends BaseArgumentsManager {
         String ftName = shpDataStore.getTypeNames()[0]; // ShapefileDataStore
                                                         // will always return a
                                                         // single name.
-        
-        //ftName = "FIGIS_GIS." + ftName;
         /** Importing SHP Data to DB **/
 
         // create the schema for the new shape file
@@ -293,7 +291,7 @@ public class Shp2Orcl extends BaseArgumentsManager {
                         
                         defGeom.setSRID(999999);
                         
-                        feature.setAttribute(a, defGeom.buffer(0));
+                        feature.setAttribute(a, defGeom);
                     } else {
                         feature.setAttribute(a, attribute);
                     }
